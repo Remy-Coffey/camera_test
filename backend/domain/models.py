@@ -112,6 +112,7 @@ class ActivitySegment:
     parse_mode: str | None = None
     raw_response_present: bool = False
     sampling_events: list[str] = field(default_factory=list)
+    selected_keyframe_reasons: list[dict[str, Any]] = field(default_factory=list)
     debug: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -142,6 +143,7 @@ class ActivitySegment:
             "parse_mode": self.parse_mode,
             "raw_response_present": self.raw_response_present,
             "sampling_events": self.sampling_events,
+            "selected_keyframe_reasons": self.selected_keyframe_reasons,
             "debug": self.debug,
             "thumbnail_timestamp": self.thumbnail_timestamp,
             "features": self.features,
@@ -173,6 +175,7 @@ class ActivitySegment:
             parse_mode=data.get("parse_mode"),
             raw_response_present=bool(data.get("raw_response_present", False)),
             sampling_events=[str(item) for item in data.get("sampling_events", [])],
+            selected_keyframe_reasons=[dict(item) for item in data.get("selected_keyframe_reasons", [])],
             debug=dict(data.get("debug", {})),
         )
 
@@ -253,6 +256,7 @@ class AnalysisTask:
     video_enhancement_enabled: bool = False
     text_model: str | None = None
     video_model: str | None = None
+    performance_profile: str = "balanced"
     created_at: datetime | None = None
     updated_at: datetime | None = None
     started_at: datetime | None = None

@@ -63,6 +63,7 @@ class SQLiteRepository:
                     video_enhancement_enabled INTEGER NOT NULL DEFAULT 0,
                     text_model TEXT,
                     video_model TEXT,
+                    performance_profile TEXT NOT NULL DEFAULT 'balanced',
                     recovery_stage TEXT,
                     recovery_reason TEXT,
                     last_recovered_at TEXT,
@@ -144,6 +145,7 @@ class SQLiteRepository:
             self._ensure_column(conn, "analysis_tasks", "video_enhancement_enabled", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "analysis_tasks", "text_model", "TEXT")
             self._ensure_column(conn, "analysis_tasks", "video_model", "TEXT")
+            self._ensure_column(conn, "analysis_tasks", "performance_profile", "TEXT NOT NULL DEFAULT 'balanced'")
             self._ensure_column(conn, "analysis_chunks", "artifact_file_id", "TEXT")
             self._ensure_column(conn, "analysis_chunks", "artifact_path", "TEXT")
             self._ensure_column(conn, "analysis_chunks", "frame_count", "INTEGER NOT NULL DEFAULT 0")
@@ -164,6 +166,7 @@ class SQLiteRepository:
         video_enhancement_enabled: bool = False,
         text_model: str | None = None,
         video_model: str | None = None,
+        performance_profile: str = "balanced",
         initial_status: TaskStatus = TaskStatus.QUEUED,
         stage: str = "uploaded",
     ) -> AnalysisTask:
@@ -173,10 +176,10 @@ class SQLiteRepository:
                 """
                 INSERT INTO analysis_tasks (
                     task_id, status, progress, stage, error, video_file_id,
-                    llm_enabled, video_enhancement_enabled, text_model, video_model,
+                    llm_enabled, video_enhancement_enabled, text_model, video_model, performance_profile,
                     recovery_stage, recovery_reason, last_recovered_at,
                     artifact_health, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -189,6 +192,7 @@ class SQLiteRepository:
                     int(video_enhancement_enabled),
                     text_model,
                     video_model,
+                    performance_profile,
                     None,
                     None,
                     None,
@@ -483,6 +487,7 @@ class SQLiteRepository:
             video_enhancement_enabled=bool(row["video_enhancement_enabled"] if "video_enhancement_enabled" in row.keys() else 0),
             text_model=row["text_model"] if "text_model" in row.keys() else None,
             video_model=row["video_model"] if "video_model" in row.keys() else None,
+            performance_profile=row["performance_profile"] if "performance_profile" in row.keys() and row["performance_profile"] else "balanced",
             created_at=str_to_dt(row["created_at"]),
             updated_at=str_to_dt(row["updated_at"]),
             started_at=str_to_dt(row["started_at"]),

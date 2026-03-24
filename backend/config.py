@@ -8,6 +8,26 @@ from pathlib import Path
 
 TEXT_MODEL_WHITELIST = ("qwen2.5:7b", "mistral:7b-instruct-q4_K_M")
 VIDEO_MODEL_WHITELIST = ("minicpm-v:8b", "moondream:1.8b", "llava:7b")
+PERFORMANCE_PROFILES = {
+    "fast": {
+        "max_keyframes": 3,
+        "keyframe_max_size": 512,
+        "text_skip_min_chars": 40,
+        "prefer_clip_rerun": False,
+    },
+    "balanced": {
+        "max_keyframes": 4,
+        "keyframe_max_size": 640,
+        "text_skip_min_chars": 48,
+        "prefer_clip_rerun": False,
+    },
+    "quality": {
+        "max_keyframes": 5,
+        "keyframe_max_size": 768,
+        "text_skip_min_chars": 64,
+        "prefer_clip_rerun": False,
+    },
+}
 
 
 @dataclass(slots=True)
@@ -31,7 +51,7 @@ class AppConfig:
     llm_enabled: bool = False
     llm_model: str = "qwen2.5:7b"
     llm_base_url: str = "http://127.0.0.1:11434"
-    llm_timeout_seconds: int = 30
+    llm_timeout_seconds: int = 90
     llm_max_retries: int = 1
     text_batch_size: int = 5
     video_llm_enabled: bool = True
@@ -40,6 +60,7 @@ class AppConfig:
     keyframes_per_segment: int = 4
     keyframe_max_size: int = 896
     worker_mode: str = "thread"
+    default_performance_profile: str = "balanced"
 
     @classmethod
     def from_env(cls, base_dir: Path | None = None) -> "AppConfig":
@@ -78,7 +99,7 @@ class AppConfig:
             llm_enabled=os.getenv("CAMERA_TEST_LLM_ENABLED", "0") == "1",
             llm_model=os.getenv("CAMERA_TEST_LLM_MODEL", "qwen2.5:7b"),
             llm_base_url=os.getenv("CAMERA_TEST_LLM_BASE_URL", "http://127.0.0.1:11434"),
-            llm_timeout_seconds=int(os.getenv("CAMERA_TEST_LLM_TIMEOUT_SECONDS", "30")),
+            llm_timeout_seconds=int(os.getenv("CAMERA_TEST_LLM_TIMEOUT_SECONDS", "90")),
             llm_max_retries=int(os.getenv("CAMERA_TEST_LLM_MAX_RETRIES", "1")),
             text_batch_size=max(1, int(os.getenv("CAMERA_TEST_TEXT_BATCH_SIZE", "5"))),
             video_llm_enabled=os.getenv("CAMERA_TEST_VIDEO_LLM_ENABLED", "1") == "1",
@@ -87,6 +108,7 @@ class AppConfig:
             keyframes_per_segment=max(2, int(os.getenv("CAMERA_TEST_KEYFRAMES_PER_SEGMENT", "4"))),
             keyframe_max_size=max(256, int(os.getenv("CAMERA_TEST_KEYFRAME_MAX_SIZE", "896"))),
             worker_mode=os.getenv("CAMERA_TEST_WORKER_MODE", default_worker_mode),
+            default_performance_profile=os.getenv("CAMERA_TEST_PERFORMANCE_PROFILE", "balanced"),
         )
 
     def ensure_directories(self) -> None:
@@ -100,3 +122,17 @@ class AppConfig:
     @property
     def available_video_models(self) -> tuple[str, ...]:
         return VIDEO_MODEL_WHITELIST
+
+    @property
+    def available_performance_profiles(self) -> tuple[str, ...]:
+        return tuple(PERFORMANCE_PROFILES.keys())
+
+    def resolve_performance_profile(self, value: str | None) -> str:
+        candidate = (value or self.default_performance_profile or "balanced").strip().lower()
+        if candidate not in PERFORMANCE_PROFILES:
+            return "balanced"
+        return candidate
+
+    def performance_profile_settings(self, value: str | None) -> dict[str, int | bool]:
+        profile = self.resolve_performance_profile(value)
+        return {"name": profile, **PERFORMANCE_PROFILES[profile]}

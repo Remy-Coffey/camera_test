@@ -41,6 +41,7 @@
         videoEnhancementInput: $("#video-enhancement"),
         textModelSelect: $("#text-model"),
         videoModelSelect: $("#video-model"),
+        performanceProfileSelect: $("#performance-profile"),
         controlNote: $("#control-note"),
         debugBadge: $("#debug-badge"),
         debugSummary: $("#debug-summary"),
@@ -108,6 +109,7 @@
             video_enhancement_enabled: el.videoEnhancementInput.checked,
             text_model: el.textModelSelect.value || null,
             video_model: el.videoModelSelect.value || null,
+            performance_profile: el.performanceProfileSelect.value || "balanced",
         };
     }
 
@@ -131,12 +133,12 @@
         el.resultSource.textContent = "规则层";
         el.debugBadge.textContent = "未加载";
         el.statusTitle.textContent = "等待上传";
-        el.statusSubtitle.textContent = "上传后会显示当前阶段、分片进度和模型增强状态。";
+        el.statusSubtitle.textContent = "上传后会显示当前阶段、分片进度、性能档位和模型状态。";
         setTaskTone("idle");
         setTaskMessage("系统尚未开始分析。");
         el.cancelBtn.classList.add("hidden");
         el.segmentsList.innerHTML = '<p class="segments-empty">结果生成后会显示在这里。</p>';
-        el.debugSummary.innerHTML = '<p class="segments-empty">分析完成后，可在这里查看 prompt、原始输出、关键帧、短片段与回退原因。</p>';
+        el.debugSummary.innerHTML = '<p class="segments-empty">分析完成后，可在这里查看 prompt、原始输出、关键帧、缓存命中与回退原因。</p>';
         el.debugSegment.innerHTML = '<p class="segments-empty">点击任意片段的“查看调试”以展开底层信息。</p>';
         el.timelineStart.textContent = "00:00";
         el.timelineEnd.textContent = "--:--";
@@ -149,24 +151,42 @@
         try {
             const response = await fetch("/api/system/models");
             state.systemModels = await response.json();
+            const {
+                available_text_models = [],
+                available_video_models = [],
+                available_performance_profiles = [],
+                default_text_model,
+                default_video_model,
+                default_performance_profile,
+            } = state.systemModels;
+
             el.textModelSelect.innerHTML = "";
             el.videoModelSelect.innerHTML = "";
-            for (const model of state.systemModels.available_text_models || []) {
+            el.performanceProfileSelect.innerHTML = "";
+
+            for (const model of available_text_models) {
                 const option = document.createElement("option");
                 option.value = model;
                 option.textContent = model;
-                option.selected = model === state.systemModels.default_text_model;
+                option.selected = model === default_text_model;
                 el.textModelSelect.appendChild(option);
             }
-            for (const model of state.systemModels.available_video_models || []) {
+            for (const model of available_video_models) {
                 const option = document.createElement("option");
                 option.value = model;
                 option.textContent = model;
-                option.selected = model === state.systemModels.default_video_model;
+                option.selected = model === default_video_model;
                 el.videoModelSelect.appendChild(option);
             }
+            for (const profile of available_performance_profiles) {
+                const option = document.createElement("option");
+                option.value = profile;
+                option.textContent = profile;
+                option.selected = profile === default_performance_profile;
+                el.performanceProfileSelect.appendChild(option);
+            }
         } catch {
-            el.controlNote.textContent = "暂时无法读取模型列表，将使用服务端默认配置。";
+            el.controlNote.textContent = "暂时无法读取模型与性能档位，将使用服务端默认配置。";
         }
     }
 
@@ -247,16 +267,22 @@
         el.phaseValue.textContent = phaseLabels[task.stage] || safeText(task.stage, "未知阶段");
         el.chunkValue.textContent = `${task.completed_chunks || 0} / ${task.chunk_count || 0}${task.processing_chunks ? ` · 运行中 ${task.processing_chunks}` : ""}`;
         el.statusTitle.textContent = phaseLabels[task.stage] || "正在分析";
-        el.statusSubtitle.textContent = task.error ? `错误：${task.error}` : "正在执行当前阶段。";
+        el.statusSubtitle.textContent = task.error
+            ? `错误：${task.error}`
+            : `性能档位：${safeText(task.performance_profile, "balanced")}`;
         setTaskTone(task.status);
 
         const modelSummary = [];
         if (task.video_enhancement_enabled && task.video_model) modelSummary.push(`视频 ${task.video_model}`);
         if (task.llm_enabled && task.text_model) modelSummary.push(`文本 ${task.text_model}`);
-        el.llmValue.textContent = modelSummary.join(" / ") || "未启用";
+        modelSummary.push(`档位 ${safeText(task.performance_profile, "balanced")}`);
+        el.llmValue.textContent = modelSummary.join(" / ");
 
-        if (task.recovery_reason) setTaskMessage(`恢复信息：${task.recovery_reason} · 资源状态：${task.artifact_health}`);
-        else setTaskMessage(`当前阶段：${phaseLabels[task.stage] || task.stage}，任务状态：${task.status}`);
+        if (task.recovery_reason) {
+            setTaskMessage(`恢复信息：${task.recovery_reason} · 资源状态：${task.artifact_health}`);
+        } else {
+            setTaskMessage(`当前阶段：${phaseLabels[task.stage] || task.stage}，任务状态：${task.status}`);
+        }
 
         if (["completed", "failed", "expired", "cancelled"].includes(task.status)) el.cancelBtn.classList.add("hidden");
         else el.cancelBtn.classList.remove("hidden");
@@ -364,15 +390,19 @@
             state.debugData = await response.json();
             const summary = state.debugData.debug_summary || {};
             const counts = summary.video_status_counts || {};
+            const textCounts = summary.text_status_counts || {};
             const latency = summary.latency_summary || {};
             el.debugBadge.textContent = Object.keys(counts).length ? "可查看" : "未生成";
             el.debugSummary.innerHTML = `
                 <div class="debug-grid">
                     <div class="debug-card"><span>结果来源</span><strong>${safeText(state.debugData.result_source)}</strong></div>
                     <div class="debug-card"><span>视频状态计数</span><strong>${Object.entries(counts).map(([k, v]) => `${k}:${v}`).join(" / ") || "--"}</strong></div>
-                    <div class="debug-card"><span>平均耗时</span><strong>${safeText(latency.avg_video_latency_ms, 0)} ms</strong></div>
+                    <div class="debug-card"><span>文本状态计数</span><strong>${Object.entries(textCounts).map(([k, v]) => `${k}:${v}`).join(" / ") || "--"}</strong></div>
+                    <div class="debug-card"><span>平均视频耗时</span><strong>${safeText(latency.avg_video_latency_ms, 0)} ms</strong></div>
+                    <div class="debug-card"><span>平均文本耗时</span><strong>${safeText(latency.avg_text_latency_ms, 0)} ms</strong></div>
+                    <div class="debug-card"><span>性能档位</span><strong>${safeText((state.debugData.sampling_profile || {}).performance_profile, "balanced")}</strong></div>
                 </div>
-                <p class="debug-note">点击片段的“查看调试”，可查看时间、人数、track、prompt、原始输出、回退原因和单片段重跑入口。</p>
+                <p class="debug-note">点击片段的“查看调试”，可以查看关键帧选择原因、模型原始输出、文本是否被策略跳过，以及是否命中缓存。</p>
             `;
         } catch (error) {
             el.debugBadge.textContent = "未生成";
@@ -408,6 +438,7 @@
                     <div class="segment-meta-row">
                         <span class="segment-meta">track ${safeText(segment.track_count, 0)}</span>
                         <span class="segment-meta">场景变化 ${Number(segment.scene_change_score || 0).toFixed(2)}</span>
+                        <span class="segment-meta">${safeText(segment.video_result_status, "rule_only")}</span>
                     </div>
                     ${labels.length ? `<div class="segment-labels">${labels.map((label) => `<span class="segment-label">${label}</span>`).join("")}</div>` : ""}
                     <div class="segment-actions">
@@ -441,6 +472,7 @@
             text_model: el.textModelSelect.value || null,
             run_video: true,
             run_text: el.textEnhancementInput.checked,
+            performance_profile: el.performanceProfileSelect.value || "balanced",
         };
         const response = await fetch(`/api/tasks/${state.currentTaskId}/debug/segments/${index}/rerun`, {
             method: "POST",
@@ -464,6 +496,7 @@
         const text = data.text_debug;
         const timings = data.timings || {};
         const clip = data.clip;
+        const selectedReasons = data.selected_keyframe_reasons || segment.selected_keyframe_reasons || [];
 
         el.debugSegment.innerHTML = `
             <div class="debug-panel">
@@ -497,10 +530,10 @@
                     <div class="debug-block">
                         <h4>关键帧</h4>
                         <div class="debug-frames">
-                            ${keyframes.length ? keyframes.map((frame) => `
+                            ${keyframes.length ? keyframes.map((frame, frameIndex) => `
                                 <figure class="debug-frame">
                                     <img src="${frame.url}" alt="关键帧 ${frame.index}">
-                                    <figcaption>#${frame.index} · ${formatTime(frame.timestamp)}</figcaption>
+                                    <figcaption>#${frame.index} · ${formatTime(frame.timestamp)} · ${safeText((selectedReasons[frameIndex] || {}).reason, "selected")}</figcaption>
                                 </figure>
                             `).join("") : '<p class="segments-empty">没有可用关键帧。</p>'}
                         </div>
@@ -508,12 +541,25 @@
                 </div>
                 <div class="debug-raw-grid">
                     <div class="debug-block">
+                        <h4>关键帧策略</h4>
+                        <pre>${JSON.stringify({
+                            selected_keyframe_count: data.selected_keyframe_count || 0,
+                            selected_keyframe_reasons: selectedReasons,
+                            performance_profile: ((data.rerun || {}).performance_profile) || (state.debugData?.sampling_profile || {}).performance_profile || "balanced",
+                            cache_hit: Boolean(data.cache_hit),
+                        }, null, 2)}</pre>
+                    </div>
+                    <div class="debug-block">
                         <h4>规则输入摘要</h4>
                         <pre>${JSON.stringify(data.features || {}, null, 2)}</pre>
                     </div>
                     <div class="debug-block">
                         <h4>视频模型状态</h4>
-                        <pre>${renderStatusLabel(vision, "vision")} · ${safeText(timings.vision_latency_ms, 0)} ms\n${safeText((((vision || {}).debug) || {}).vision_fallback_reason, "无")}</pre>
+                        <pre>${renderStatusLabel(vision, "vision")} · ${safeText(timings.vision_latency_ms, 0)} ms
+${safeText((((vision || {}).debug) || {}).vision_fallback_reason, "无")}
+cache_hit: ${safeText((((vision || {}).debug) || {}).cache_hit, false)}
+selected_keyframe_count: ${safeText((((vision || {}).debug) || {}).selected_keyframe_count, data.selected_keyframe_count || 0)}
+keyframe_max_size: ${safeText((((vision || {}).debug) || {}).keyframe_max_size, "--")}</pre>
                     </div>
                     <div class="debug-block">
                         <h4>视频模型 prompt</h4>
@@ -525,11 +571,17 @@
                     </div>
                     <div class="debug-block">
                         <h4>文本模型状态</h4>
-                        <pre>${renderStatusLabel(text, "text")} · ${safeText(timings.text_latency_ms, 0)} ms\n${safeText((((text || {}).debug) || {}).text_fallback_reason, "无")}</pre>
+                        <pre>${renderStatusLabel(text, "text")} · ${safeText(timings.text_latency_ms, 0)} ms
+${safeText((((text || {}).debug) || {}).text_fallback_reason, "无")}
+cache_hit: ${safeText((((text || {}).debug) || {}).cache_hit, false)}</pre>
                     </div>
                     <div class="debug-block">
                         <h4>文本模型 prompt / 原始输出</h4>
-                        <pre>${safeText((((text || {}).debug) || {}).text_prompt, "无")}\n\n---\n\n${safeText((((text || {}).debug) || {}).text_raw_response, "无")}</pre>
+                        <pre>${safeText((((text || {}).debug) || {}).text_prompt, "无")}
+
+---
+
+${safeText((((text || {}).debug) || {}).text_raw_response, "无")}</pre>
                     </div>
                 </div>
             </div>

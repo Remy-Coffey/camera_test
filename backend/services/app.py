@@ -23,6 +23,7 @@ class StartTaskRequest(BaseModel):
     video_enhancement_enabled: bool | None = None
     text_model: str | None = None
     video_model: str | None = None
+    performance_profile: str | None = None
 
 
 class RerunSegmentRequest(BaseModel):
@@ -31,6 +32,7 @@ class RerunSegmentRequest(BaseModel):
     text_model: str | None = None
     run_video: bool = True
     run_text: bool = False
+    performance_profile: str | None = None
 
 
 def task_to_dict(task) -> dict:
@@ -48,6 +50,7 @@ def task_to_dict(task) -> dict:
         "video_enhancement_enabled": task.video_enhancement_enabled,
         "text_model": task.text_model,
         "video_model": task.video_model,
+        "performance_profile": getattr(task, "performance_profile", "balanced"),
         "recovery_stage": task.recovery_stage,
         "recovery_reason": task.recovery_reason,
         "last_recovered_at": task.last_recovered_at.isoformat() if task.last_recovered_at else None,
@@ -132,6 +135,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             video_enhancement_enabled=app_config.video_llm_enabled,
             text_model=app_config.llm_model,
             video_model=app_config.video_llm_model,
+            performance_profile=app_config.default_performance_profile,
         )
         repository.create_media_file(
             file_id=file_id,
@@ -170,6 +174,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 video_enhancement_enabled=payload.video_enhancement_enabled,
                 text_model=payload.text_model,
                 video_model=payload.video_model,
+                performance_profile=payload.performance_profile,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -254,6 +259,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             text_model=options.text_model,
             run_video=options.run_video,
             run_text=options.run_text,
+            performance_profile=options.performance_profile,
         )
         if not payload:
             raise HTTPException(status_code=404, detail="片段调试信息不存在")

@@ -45,19 +45,19 @@
                         <div class="hero-copy">
                             <span class="hero-kicker">本地处理</span>
                             <h2>上传监控视频，得到活动时间段、行为标签与中文摘要</h2>
-                            <p>系统会先定位有人出现的时间段，再用本地多模态模型补强行为与场景理解，最后整理成结构化结果和调试信息。</p>
+                            <p>系统会先定位有人出现的时间段，再用本地多模态模型补充动作、场景和互动描述，最后输出可读结果与调试信息。</p>
                         </div>
                         <div class="hero-stats">
-                            <div class="hero-stat"><span>检测链路</span><strong>YOLO / 多模态 / 文本总结</strong></div>
+                            <div class="hero-stat"><span>检测链路</span><strong>YOLO / 多模态 / 文本整理</strong></div>
                             <div class="hero-stat"><span>支持格式</span><strong>MP4 / MOV / AVI / MKV / WebM</strong></div>
-                            <div class="hero-stat"><span>默认模式</span><strong>本地并行分片分析</strong></div>
+                            <div class="hero-stat"><span>默认模式</span><strong>平衡模式，本地并行分片分析</strong></div>
                         </div>
                         <div id="drop-zone" class="drop-zone">
                             <div class="drop-zone-frame">
                                 <div class="drop-zone-icon">上传</div>
                                 <div class="drop-zone-kicker">上传监控视频</div>
                                 <p class="drop-zone-text">拖拽到这里，或点击选择文件</p>
-                                <p class="drop-zone-hint">上传后会自动创建任务，并按照右侧策略开始分析。</p>
+                                <p class="drop-zone-hint">上传后会自动创建任务，并按右侧策略开始分析。</p>
                             </div>
                             <input type="file" id="file-input" accept=".mp4,.mov,.avi,.mkv,.webm" hidden>
                         </div>
@@ -67,29 +67,30 @@
                         <div class="panel-heading">
                             <span class="panel-kicker">增强策略</span>
                             <h3>选择分析方式</h3>
-                            <p id="control-note" class="panel-note">系统会先用视频模型理解画面，再由文本模型整理摘要。</p>
+                            <p id="control-note" class="panel-note">默认使用平衡模式，优先保持描述准确率，同时压低单片段推理耗时。</p>
                         </div>
                         <div class="strategy-stack">
                             <label class="toggle-card">
                                 <input id="text-enhancement" type="checkbox" checked>
                                 <div class="toggle-copy">
                                     <span>文本增强</span>
-                                    <small>把规则层和视频层结果整理成自然的中文摘要。</small>
+                                    <small>将规则层和视频层结果整理成自然中文摘要。</small>
                                 </div>
                             </label>
                             <label class="toggle-card">
                                 <input id="video-enhancement" type="checkbox" checked>
                                 <div class="toggle-copy">
                                     <span>视频增强</span>
-                                    <small>用多模态模型补强动作、互动和场景变化的描述。</small>
+                                    <small>使用多模态模型补充动作、互动和场景变化描述。</small>
                                 </div>
                             </label>
                             <label class="select-card"><span>文本模型</span><select id="text-model"></select></label>
                             <label class="select-card"><span>视频模型</span><select id="video-model"></select></label>
+                            <label class="select-card"><span>性能档位</span><select id="performance-profile"></select></label>
                         </div>
                         <div class="strategy-foot">
-                            <div class="strategy-tip"><span>推荐</span><strong>默认保留 qwen2.5:7b + minicpm-v:8b</strong></div>
-                            <div class="strategy-tip muted"><span>提示</span><strong>如果只是测速，可先关闭视频增强。</strong></div>
+                            <div class="strategy-tip"><span>推荐</span><strong>平衡模式 + qwen2.5:7b + minicpm-v:8b</strong></div>
+                            <div class="strategy-tip muted"><span>提示</span><strong>如果只看识别速度，可切换到快速模式。</strong></div>
                         </div>
                     </aside>
                 </div>
@@ -101,7 +102,7 @@
                         <div>
                             <div class="status-kicker">任务状态</div>
                             <h2 id="status-title">等待上传</h2>
-                            <p id="status-subtitle" class="status-subtitle">上传后会显示当前阶段、分片进度和模型增强状态。</p>
+                            <p id="status-subtitle" class="status-subtitle">上传后会显示当前阶段、分片进度、性能档位和模型运行状态。</p>
                         </div>
                         <div class="status-actions">
                             <button id="cancel-btn" class="action-btn action-btn-danger hidden" type="button">停止分析</button>
@@ -147,7 +148,7 @@
 
                 <div class="segments-container debug-container">
                     <div class="timeline-header"><h2>模型调试</h2><span id="debug-badge" class="segment-badge">未加载</span></div>
-                    <div id="debug-summary" class="debug-summary"><p class="segments-empty">分析完成后，可在这里查看 prompt、原始输出、关键帧、短片段与回退原因。</p></div>
+                    <div id="debug-summary" class="debug-summary"><p class="segments-empty">分析完成后，可在这里查看 prompt、原始输出、关键帧、缓存命中与回退原因。</p></div>
                     <div id="debug-segment" class="debug-segment"><p class="segments-empty">点击任意片段的“查看调试”以展开底层信息。</p></div>
                 </div>
             </section>

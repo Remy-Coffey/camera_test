@@ -20,6 +20,8 @@ artifacts/
 *.sqlite3
 .pytest_cache/
 backend/*.pt
+backend_server.out.log
+backend_server.err.log
 
 # OS files
 Thumbs.db

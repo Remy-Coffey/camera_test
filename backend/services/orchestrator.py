@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import threading
 import time
@@ -114,8 +115,10 @@ class TaskOrchestrator:
         return {
             "default_text_model": self.config.llm_model,
             "default_video_model": self.config.video_llm_model,
+            "default_performance_profile": self.config.default_performance_profile,
             "available_text_models": list(self.config.available_text_models),
             "available_video_models": list(self.config.available_video_models),
+            "available_performance_profiles": list(self.config.available_performance_profiles),
             "text": self.description_enhancer.health(self.config.llm_model),
             "video": self.video_enhancer.health(self.config.video_llm_model),
         }
@@ -132,6 +135,7 @@ class TaskOrchestrator:
         video_enhancement_enabled: bool | None = None,
         text_model: str | None = None,
         video_model: str | None = None,
+        performance_profile: str | None = None,
     ) -> StartTaskResult:
         task = self.repository.get_task(task_id)
         if not task:
@@ -143,6 +147,7 @@ class TaskOrchestrator:
             raise ValueError("unsupported text model")
         if video_model and video_model not in self.config.available_video_models:
             raise ValueError("unsupported video model")
+        resolved_profile = self.config.resolve_performance_profile(performance_profile or task.performance_profile)
 
         metadata = probe_video(Path(media_files[0].path))
         self.repository.update_task(
@@ -156,6 +161,7 @@ class TaskOrchestrator:
             video_enhancement_enabled=self.config.video_llm_enabled if video_enhancement_enabled is None else video_enhancement_enabled,
             text_model=text_model or self.config.llm_model,
             video_model=video_model or self.config.video_llm_model,
+            performance_profile=resolved_profile,
             error=None,
         )
 
@@ -484,36 +490,110 @@ class TaskOrchestrator:
         status = self.description_enhancer.health(configured)
         return bool(status["reachable"] and status["model_installed"])
 
-    def _select_keyframe_timestamps(self, segment, detections: list[DetectionFrame]) -> list[float]:
+    def _profile_settings(self, profile: str | None) -> dict[str, int | bool | str]:
+        return self.config.performance_profile_settings(profile)
+
+    def _segment_has_strong_video_description(self, segment) -> bool:
+        description = (segment.video_description or "").strip()
+        if not description:
+            return False
+        if segment.video_result_status not in {"success", "weak_success"}:
+            return False
+        has_structure = bool(segment.action or segment.scene or segment.video_labels)
+        min_chars = int(self._profile_settings(None)["text_skip_min_chars"])
+        return has_structure or len(description) >= min_chars
+
+    def _text_skip_payload(self, task, segment, reason: str) -> dict:
+        return {
+            "status": reason,
+            "fallback_reason": None,
+            "latency_ms": 0,
+            "output": None,
+            "debug": {
+                "text_model": task.text_model or self.config.llm_model,
+                "text_provider": "policy",
+                "text_status": reason,
+                "text_fallback_reason": None,
+                "text_prompt": None,
+                "text_raw_response": None,
+                "text_parse_ok": False,
+                "text_parse_mode": None,
+                "text_latency_ms": 0,
+                "skip_reason": reason,
+                "source_video_description": segment.video_description,
+            },
+        }
+
+    def _select_keyframe_timestamps(self, segment, detections: list[DetectionFrame], profile: str | None = None) -> tuple[list[float], list[dict]]:
+        settings = self._profile_settings(profile)
+        max_keyframes = int(settings["max_keyframes"])
         segment_frames = [frame for frame in detections if segment.start_time <= frame.timestamp <= segment.end_time and frame.has_person]
         if not segment_frames:
-            midpoint = segment.start_time + max(segment.end_time - segment.start_time, 0.1) / 2.0
-            return [round(midpoint, 3)]
+            midpoint = round(segment.start_time + max(segment.end_time - segment.start_time, 0.1) / 2.0, 3)
+            return [midpoint], [{"timestamp": midpoint, "reason": "fallback_midpoint", "sampling_mode": "fallback"}]
 
-        selected: list[DetectionFrame] = [segment_frames[0]]
+        candidates: list[tuple[DetectionFrame, str]] = [(segment_frames[0], "start")]
+        if len(segment_frames) > 1:
+            candidates.append((segment_frames[-1], "end"))
+
         midpoint = segment_frames[len(segment_frames) // 2]
-        if midpoint.timestamp not in {frame.timestamp for frame in selected}:
-            selected.append(midpoint)
+        candidates.append((midpoint, "midpoint"))
 
         for frame in segment_frames:
-            if frame.scene_changed or frame.sampling_mode == "refined":
-                if frame.timestamp not in {item.timestamp for item in selected}:
-                    selected.append(frame)
+            if frame.person_count != segment_frames[0].person_count:
+                candidates.append((frame, "person_count_change"))
+            if frame.scene_changed:
+                candidates.append((frame, "scene_change"))
+            if frame.sampling_mode == "refined":
+                candidates.append((frame, "refined_sampling"))
 
         for prev, curr in zip(segment_frames, segment_frames[1:]):
-            if prev.person_count != curr.person_count or (prev.track_ids and curr.track_ids and prev.track_ids[0] != curr.track_ids[0]):
-                if curr.timestamp not in {item.timestamp for item in selected}:
-                    selected.append(curr)
+            if prev.track_ids and curr.track_ids and prev.track_ids[0] != curr.track_ids[0]:
+                candidates.append((curr, "track_switch"))
 
-        if segment_frames[-1].timestamp not in {frame.timestamp for frame in selected}:
-            selected.append(segment_frames[-1])
+        scored: dict[float, dict] = {}
+        priority = {
+            "start": 0,
+            "person_count_change": 1,
+            "track_switch": 2,
+            "scene_change": 3,
+            "refined_sampling": 4,
+            "midpoint": 5,
+            "end": 6,
+        }
+        for frame, reason in candidates:
+            ts = round(frame.timestamp, 3)
+            current = scored.get(ts)
+            item = {
+                "timestamp": ts,
+                "reason": reason,
+                "sampling_mode": frame.sampling_mode,
+                "scene_change_score": frame.scene_change_score,
+                "person_count": frame.person_count,
+            }
+            if not current or priority.get(reason, 99) < priority.get(current["reason"], 99):
+                scored[ts] = item
 
-        selected = sorted(selected, key=lambda item: item.timestamp)
-        unique: list[float] = []
-        for frame in selected:
-            if frame.timestamp not in unique:
-                unique.append(frame.timestamp)
-        return unique[: max(self.config.keyframes_per_segment + 1, 5)]
+        selected = sorted(scored.values(), key=lambda item: (priority.get(item["reason"], 99), item["timestamp"]))[:max_keyframes]
+        selected = sorted(selected, key=lambda item: item["timestamp"])
+        return [item["timestamp"] for item in selected], selected
+
+    def _cache_key(self, *, segment_index: int, mode: str, video_model: str | None, text_model: str | None, profile: str | None, timestamps: list[float], run_video: bool, run_text: bool) -> str:
+        payload = json.dumps(
+            {
+                "segment_index": segment_index,
+                "mode": mode,
+                "video_model": video_model,
+                "text_model": text_model,
+                "profile": profile,
+                "timestamps": timestamps,
+                "run_video": run_video,
+                "run_text": run_text,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def _apply_video_enhancement(self, task, result: AnalysisResult) -> AnalysisResult:
         media = self.repository.get_media_for_task(task.task_id, ArtifactKind.ORIGINAL_VIDEO)
@@ -532,19 +612,24 @@ class TaskOrchestrator:
 
         segment_images: list[list[Path]] = []
         keyframe_timestamps: list[list[float]] = []
+        keyframe_reasons: list[list[dict]] = []
+        profile_name = task.performance_profile or self.config.default_performance_profile
+        profile_settings = self._profile_settings(profile_name)
         total = max(1, len(result.segments))
         for index, segment in enumerate(result.segments, start=1):
-            timestamps = self._select_keyframe_timestamps(segment, ordered_frames)
+            timestamps, reasons = self._select_keyframe_timestamps(segment, ordered_frames, profile_name)
             frame_dir = self.config.artifact_dir / task.task_id / "keyframes" / f"{index - 1:04d}"
-            keyframes = extract_segment_keyframes(video_path, timestamps, frame_dir, self.config.keyframe_max_size)
+            keyframes = extract_segment_keyframes(video_path, timestamps, frame_dir, int(profile_settings["keyframe_max_size"]))
             segment_images.append([path for path, _ in keyframes])
             keyframe_timestamps.append([timestamp for _, timestamp in keyframes])
+            keyframe_reasons.append(reasons)
             progress = 90.0 + (index / total) * 3.0
             self.repository.update_task(task.task_id, status=TaskStatus.ENHANCING, stage="video_enhancing", progress=round(progress, 2))
 
         insights = self.video_enhancer.analyze(result.segments, segment_images, model=task.video_model or self.config.video_llm_model)
         enriched_insights: list[dict | None] = []
-        for index, (segment, insight, images, timestamps) in enumerate(zip(result.segments, insights, segment_images, keyframe_timestamps)):
+        updated_segments = []
+        for index, (segment, insight, images, timestamps, reasons) in enumerate(zip(result.segments, insights, segment_images, keyframe_timestamps, keyframe_reasons)):
             payload = insight or {
                 "output": None,
                 "fallback_reason": "empty_video_description",
@@ -569,16 +654,29 @@ class TaskOrchestrator:
                     "timestamp": timestamps[frame_index] if frame_index < len(timestamps) else None,
                     "filename": image.name,
                     "url": f"/api/tasks/{task.task_id}/debug/keyframes/{index}/{image.name}",
+                    "reason": reasons[frame_index]["reason"] if frame_index < len(reasons) else "selected",
                 }
                 for frame_index, image in enumerate(images)
             ]
+            debug_payload["performance_profile"] = profile_name
+            debug_payload["selected_keyframe_count"] = len(images)
+            debug_payload["selected_keyframe_reasons"] = reasons[: len(images)]
+            debug_payload["keyframe_max_size"] = int(profile_settings["keyframe_max_size"])
             if payload.get("output") is not None:
                 payload["output"]["keyframe_timestamps"] = timestamps
             payload["debug"] = debug_payload
             self._persist_debug_artifact(task.task_id, f"segment_{index:04d}_vision.json", payload)
             enriched_insights.append(payload)
+            updated_segments.append(segment.__class__.from_dict(segment.to_dict()))
 
-        enhanced = apply_video_insights(result, enriched_insights, task.video_model or self.config.video_llm_model)
+        for segment, reasons, timestamps in zip(updated_segments or result.segments, keyframe_reasons, keyframe_timestamps):
+            segment.selected_keyframe_reasons = reasons[: len(timestamps)]
+            segment.keyframe_timestamps = timestamps
+
+        base_result = result.__class__.from_dict(result.to_dict())
+        base_result.segments = updated_segments or base_result.segments
+        base_result.sampling_profile = {**base_result.sampling_profile, "performance_profile": profile_name}
+        enhanced = apply_video_insights(base_result, enriched_insights, task.video_model or self.config.video_llm_model)
         if enhanced.video_enhancement_used:
             return enhanced
         summary = dict(enhanced.debug_summary)
@@ -607,11 +705,51 @@ class TaskOrchestrator:
         )
 
     def _apply_text_enhancement(self, task, result: AnalysisResult) -> AnalysisResult:
-        descriptions = self.description_enhancer.enhance(result.segments, model=task.text_model or self.config.llm_model)
-        for index, payload in enumerate(descriptions):
-            if payload is not None:
+        descriptions: list[dict | None] = [None for _ in result.segments]
+        pending_segments: list = []
+        pending_indexes: list[int] = []
+        for index, segment in enumerate(result.segments):
+            if self._segment_has_strong_video_description(segment):
+                payload = self._text_skip_payload(task, segment, "skipped_high_quality_video")
+                descriptions[index] = payload
                 self._persist_debug_artifact(task.task_id, f"segment_{index:04d}_text.json", payload)
+            else:
+                pending_segments.append(segment)
+                pending_indexes.append(index)
+
+        if pending_segments:
+            generated = self.description_enhancer.enhance(pending_segments, model=task.text_model or self.config.llm_model)
+            for index, payload in zip(pending_indexes, generated):
+                descriptions[index] = payload
+                if payload is not None:
+                    self._persist_debug_artifact(task.task_id, f"segment_{index:04d}_text.json", payload)
+
         enhanced = apply_enhanced_descriptions(result, descriptions, text_model=task.text_model or self.config.llm_model)
+        if descriptions and all((payload or {}).get("status") == "skipped_high_quality_video" for payload in descriptions if payload is not None):
+            summary = dict(enhanced.debug_summary)
+            summary["text_enhancement"] = {
+                "model": task.text_model or self.config.llm_model,
+                "used": False,
+                "skip_reason": "skipped_high_quality_video",
+                "segment_count": len(result.segments),
+            }
+            return enhanced.__class__(
+                video_duration=enhanced.video_duration,
+                total_frames_analyzed=enhanced.total_frames_analyzed,
+                fps=enhanced.fps,
+                width=enhanced.width,
+                height=enhanced.height,
+                segments=enhanced.segments,
+                generated_at=enhanced.generated_at,
+                result_source=enhanced.result_source,
+                text_model=task.text_model or self.config.llm_model,
+                video_model=enhanced.video_model,
+                text_enhancement_used=False,
+                video_enhancement_used=enhanced.video_enhancement_used,
+                debug_available=enhanced.debug_available,
+                debug_summary=summary,
+                sampling_profile=enhanced.sampling_profile,
+            )
         if not enhanced.text_enhancement_used:
             return mark_text_fallback(enhanced, "text model returned no usable description", task.text_model or self.config.llm_model)
         return enhanced
@@ -790,6 +928,7 @@ class TaskOrchestrator:
                 "track_ids": track_ids,
                 "scene_change_score": segment.scene_change_score,
                 "sampling_events": segment.sampling_events,
+                "selected_keyframe_reasons": segment.selected_keyframe_reasons,
             },
             "tracker": {
                 "track_count": segment.track_count,
@@ -807,6 +946,8 @@ class TaskOrchestrator:
                 "vision_latency_ms": ((vision_debug or {}).get("debug") or {}).get("vision_latency_ms"),
                 "text_latency_ms": ((text_debug or {}).get("debug") or {}).get("text_latency_ms"),
             },
+            "selected_keyframe_count": len(segment.keyframe_timestamps),
+            "selected_keyframe_reasons": segment.selected_keyframe_reasons,
         }
 
     def rerun_segment_debug(
@@ -819,6 +960,7 @@ class TaskOrchestrator:
         text_model: str | None,
         run_video: bool,
         run_text: bool,
+        performance_profile: str | None,
     ) -> dict | None:
         result, segment = self._load_result_and_segment(task_id, segment_index)
         task = self.repository.get_task(task_id)
@@ -829,10 +971,12 @@ class TaskOrchestrator:
             return None
         video_path = Path(media[0].path)
         ordered_frames = self._ordered_task_frames(task_id)
-        timestamps = segment.keyframe_timestamps or self._select_keyframe_timestamps(segment, ordered_frames)
+        profile_name = self.config.resolve_performance_profile(performance_profile or task.performance_profile)
+        profile_settings = self._profile_settings(profile_name)
+        timestamps, reasons = self._select_keyframe_timestamps(segment, ordered_frames, profile_name)
         images_dir = self.config.artifact_dir / task_id / "debug" / f"segment_{segment_index:04d}_images"
         clip_path = self.config.artifact_dir / task_id / "debug" / f"segment_{segment_index:04d}_clip.mp4"
-        images = extract_segment_keyframes(video_path, timestamps, images_dir, self.config.keyframe_max_size)
+        images = extract_segment_keyframes(video_path, timestamps, images_dir, int(profile_settings["keyframe_max_size"]))
         clip_info = None
         if mode in {"clip", "both"}:
             export_segment_clip(video_path, segment.start_time, segment.end_time, clip_path)
@@ -845,24 +989,54 @@ class TaskOrchestrator:
 
         video_runs: dict[str, dict | None] = {}
         chosen_video = video_model or task.video_model or self.config.video_llm_model
+        chosen_text = text_model or task.text_model or self.config.llm_model
+        cache_key = self._cache_key(
+            segment_index=segment_index,
+            mode=mode,
+            video_model=chosen_video if run_video else None,
+            text_model=chosen_text if run_text else None,
+            profile=profile_name,
+            timestamps=timestamps,
+            run_video=run_video,
+            run_text=run_text,
+        )
+        cache_path = self.config.artifact_dir / task_id / "debug" / f"segment_{segment_index:04d}_rerun_{cache_key}.json"
+        if cache_path.exists():
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            for key in ("vision_debug", "text_debug"):
+                if cached.get(key):
+                    cached[key].setdefault("debug", {})["cache_hit"] = True
+            cached["cache_hit"] = True
+            return cached
+
         if run_video and mode in {"images", "both"}:
             payload = self.video_enhancer.analyze([segment], [[path for path, _ in images]], model=chosen_video)[0]
+            if payload is not None:
+                payload.setdefault("debug", {})["cache_hit"] = False
+                payload["debug"]["selected_keyframe_count"] = len(images)
+                payload["debug"]["selected_keyframe_reasons"] = reasons[: len(images)]
+                payload["debug"]["keyframe_max_size"] = int(profile_settings["keyframe_max_size"])
             self._persist_debug_artifact(task_id, f"segment_{segment_index:04d}_vision_images.json", payload or {})
             video_runs["images"] = payload
         if run_video and mode in {"clip", "both"}:
             clip_timestamps = [0.0, max((segment.end_time - segment.start_time) / 2, 0.1), max(segment.end_time - segment.start_time - 0.1, 0.1)]
             clip_images_dir = self.config.artifact_dir / task_id / "debug" / f"segment_{segment_index:04d}_clip_frames"
-            clip_images = extract_segment_keyframes(clip_path, clip_timestamps, clip_images_dir, self.config.keyframe_max_size)
+            clip_images = extract_segment_keyframes(clip_path, clip_timestamps, clip_images_dir, int(profile_settings["keyframe_max_size"]))
             payload = self.video_enhancer.analyze([segment], [[path for path, _ in clip_images]], model=chosen_video)[0]
             if payload:
                 payload.setdefault("debug", {})["input_mode"] = "clip"
+                payload["debug"]["cache_hit"] = False
+                payload["debug"]["selected_keyframe_count"] = len(clip_images)
+                payload["debug"]["selected_keyframe_reasons"] = [{"timestamp": ts, "reason": "clip_sample"} for ts in clip_timestamps[: len(clip_images)]]
+                payload["debug"]["keyframe_max_size"] = int(profile_settings["keyframe_max_size"])
             self._persist_debug_artifact(task_id, f"segment_{segment_index:04d}_vision_clip.json", payload or {})
             video_runs["clip"] = payload
 
         text_runs: dict[str, dict | None] = {}
-        chosen_text = text_model or task.text_model or self.config.llm_model
         if run_text and not video_runs:
             text_payload = self.description_enhancer.enhance([segment], model=chosen_text)[0]
+            if text_payload is not None:
+                text_payload.setdefault("debug", {})["cache_hit"] = False
             self._persist_debug_artifact(task_id, f"segment_{segment_index:04d}_text_from_rule.json", text_payload or {})
             text_runs["rule"] = text_payload
         if run_text:
@@ -872,13 +1046,18 @@ class TaskOrchestrator:
                     derived_segment = type(segment).from_dict(segment.to_dict())
                     derived_segment.video_description = vision_payload["output"]["description"]
                     derived_segment.description = vision_payload["output"]["description"]
-                text_payload = self.description_enhancer.enhance([derived_segment], model=chosen_text)[0]
+                if self._segment_has_strong_video_description(derived_segment):
+                    text_payload = self._text_skip_payload(task, derived_segment, "skipped_high_quality_video")
+                else:
+                    text_payload = self.description_enhancer.enhance([derived_segment], model=chosen_text)[0]
+                if text_payload is not None:
+                    text_payload.setdefault("debug", {})["cache_hit"] = False
                 self._persist_debug_artifact(task_id, f"segment_{segment_index:04d}_text_from_{run_name}.json", text_payload or {})
                 text_runs[run_name] = text_payload
 
         primary_vision = video_runs.get("clip") or video_runs.get("images")
         primary_text = text_runs.get("clip") or text_runs.get("images")
-        return self._build_segment_debug_payload(
+        payload = self._build_segment_debug_payload(
             task_id,
             segment_index,
             result,
@@ -891,10 +1070,16 @@ class TaskOrchestrator:
                 "mode": mode,
                 "video_model": chosen_video if run_video else None,
                 "text_model": chosen_text if run_text else None,
+                "performance_profile": profile_name,
                 "vision_runs": video_runs,
                 "text_runs": text_runs,
             }
         }
+        payload["cache_hit"] = False
+        payload["selected_keyframe_count"] = len(images)
+        payload["selected_keyframe_reasons"] = reasons[: len(images)]
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return payload
 
     def get_task_debug(self, task_id: str) -> dict | None:
         task = self.repository.get_task(task_id)
@@ -929,6 +1114,7 @@ class TaskOrchestrator:
             "status": task.status.value,
             "stage": task.stage,
             "progress": task.progress,
+            "performance_profile": task.performance_profile,
             "result_source": result.result_source,
             "sampling_profile": result.sampling_profile,
             "video_result_stats": result.debug_summary.get("video_result_stats", {}),

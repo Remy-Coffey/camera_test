@@ -52,7 +52,7 @@ def _extract_json_object(raw_text: str) -> tuple[dict[str, Any] | None, str | No
 
 def _extract_weak_description(raw_text: str) -> str | None:
     text = _strip_code_fence(raw_text)
-    text = re.sub(r"^\s*(description|描述|summary|摘要)\s*[:：]\s*", "", text, flags=re.I)
+    text = re.sub(r"^\s*(description|描述|summary|摘要)\s*[:：]?\s*", "", text, flags=re.I)
     lines = [line.strip(" -\t") for line in text.splitlines() if line.strip()]
     if not lines:
         return None
@@ -324,7 +324,7 @@ class OllamaVisionProvider(OllamaProviderBase):
             "目标是描述画面里真正可见的事实：人数变化、人物状态、动作、互动和场景变化。\n"
             "要求：\n"
             "1. 优先描述可见动作，例如站立等待、交谈、走动、围观、鼓掌、举手、跑动、坐着、看向某处。\n"
-            "2. 如果看不出具体动作，也要明确说明是站立、坐着、等待或视线变化，不能只写“有人停留”。\n"
+            "2. 如果看不出具体动作，也要明确说是站立、坐着、等待或视线变化，不能只写“有人停留”。\n"
             "3. 只有在画面支持时，才能参考规则层信息。\n"
             "4. 返回 JSON，格式为 "
             "{\"description\":\"...\",\"labels\":[\"...\"],\"action\":\"...\",\"scene\":\"...\",\"confidence\":0.0,\"evidence_frames\":[0,1]}\n"

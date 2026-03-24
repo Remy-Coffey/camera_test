@@ -56,9 +56,11 @@ def test_upload_start_and_result_flow(client, sample_video: Path, monkeypatch):
             "video_enhancement_enabled": False,
             "text_model": "qwen2.5:7b",
             "video_model": "minicpm-v:8b",
+            "performance_profile": "balanced",
         },
     )
     assert start_response.status_code == 200
+    assert start_response.json()["task"]["performance_profile"] == "balanced"
 
     client.app.state.orchestrator.run_once()
     client.app.state.orchestrator.run_once()
@@ -101,12 +103,28 @@ def test_upload_start_and_result_flow(client, sample_video: Path, monkeypatch):
             "run_text": False,
             "video_model": "minicpm-v:8b",
             "text_model": "qwen2.5:7b",
+            "performance_profile": "fast",
         },
     )
     assert rerun_response.status_code == 200
     rerun_payload = rerun_response.json()
     assert rerun_payload["segment"]["start_time"] >= 0
     assert "rerun" in rerun_payload
+    assert rerun_payload["rerun"]["performance_profile"] == "fast"
+
+    rerun_response_cached = client.post(
+        f"/api/tasks/{task_id}/debug/segments/0/rerun",
+        json={
+            "mode": "images",
+            "run_video": False,
+            "run_text": False,
+            "video_model": "minicpm-v:8b",
+            "text_model": "qwen2.5:7b",
+            "performance_profile": "fast",
+        },
+    )
+    assert rerun_response_cached.status_code == 200
+    assert rerun_response_cached.json()["cache_hit"] is True
 
 
 def test_upload_rejects_invalid_extension(client, tmp_path):
@@ -133,3 +151,5 @@ def test_models_status_endpoint(client):
     payload = response.json()
     assert "available_text_models" in payload
     assert "available_video_models" in payload
+    assert payload["default_performance_profile"] == "balanced"
+    assert "balanced" in payload["available_performance_profiles"]
