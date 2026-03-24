@@ -1,3 +1,8 @@
+[CmdletBinding()]
+param(
+    [switch]$Reload
+)
+
 $ErrorActionPreference = "Stop"
 
 $env:CAMERA_TEST_LLM_ENABLED = if ($env:CAMERA_TEST_LLM_ENABLED) { $env:CAMERA_TEST_LLM_ENABLED } else { "1" }
@@ -14,4 +19,13 @@ Write-Host ("Video model: {0}" -f $env:CAMERA_TEST_VIDEO_LLM_MODEL)
 & "$PSScriptRoot\check_ollama.ps1"
 
 Set-Location (Join-Path $PSScriptRoot "..\backend")
-py -3.11 -m uvicorn main:app --reload --port 8000
+$uvicornArgs = @("-3.11", "-m", "uvicorn", "main:app", "--port", "8000")
+
+if ($Reload) {
+    Write-Host "Backend mode: development reload enabled"
+    $uvicornArgs += "--reload"
+} else {
+    Write-Host "Backend mode: standard"
+}
+
+py @uvicornArgs
