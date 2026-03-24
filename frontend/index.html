@@ -3,84 +3,156 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>监控视频人物活动检测</title>
-    <meta name="description" content="智能分析监控视频，自动识别人物活动时段并生成描述">
+    <title>巡影</title>
+    <meta name="description" content="上传监控视频，得到活动时间段、行为标签、中文摘要与模型调试信息。">
     <link rel="stylesheet" href="/static/index.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="app">
-        <!-- 顶栏 -->
+    <div class="app-shell">
         <header class="header">
-            <div class="header-logo">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                </svg>
-                <h1>视频活动检测</h1>
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 64 64" class="brand-mark-svg" role="img">
+                        <defs>
+                            <linearGradient id="markGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#93c5fd" />
+                                <stop offset="100%" stop-color="#38bdf8" />
+                            </linearGradient>
+                        </defs>
+                        <path d="M18 20c3-8 11-13 20-13s17 5 20 13l-6 2c-2-5-8-8.5-14-8.5S26 17 24 22z" fill="url(#markGlow)"/>
+                        <path d="M15 24h34c2 0 3 1.2 3 3v4c0 1.8-1 3-3 3H15c-2 0-3-1.2-3-3v-4c0-1.8 1-3 3-3z" fill="#17325a" stroke="#67b7ff" stroke-width="1.4"/>
+                        <path d="M22 34h20l-2 11c-.8 4.6-4.5 8.7-8 10.8c-3.5-2.1-7.2-6.2-8-10.8z" fill="#10233f" stroke="#67b7ff" stroke-width="1.4"/>
+                        <path d="M25 18l7-5l7 5" fill="none" stroke="#e0f2fe" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+                        <circle cx="32" cy="41" r="5.4" fill="#e0f2fe"/>
+                        <path d="M32 36.9l1.5 3.1l3.3.4l-2.4 2.3l.7 3.2L32 44.3l-3.1 1.6l.7-3.2l-2.4-2.3l3.3-.4z" fill="#17325a"/>
+                    </svg>
+                </div>
+                <div class="brand-copy">
+                    <h1>巡影</h1>
+                    <p>监控视频智能分析台</p>
+                </div>
             </div>
-            <span class="header-badge">AI Powered</span>
+            <div class="header-actions">
+                <div id="llm-pill" class="llm-pill llm-pill-muted">模型状态检测中</div>
+                <span class="header-badge">并行分片分析</span>
+            </div>
         </header>
 
         <main class="main">
-            <!-- 上传区 -->
             <section id="upload-section" class="upload-section">
-                <div id="drop-zone" class="drop-zone">
-                    <div class="drop-zone-icon">
-                        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                            <polyline points="17 8 12 3 7 8"/>
-                            <line x1="12" y1="3" x2="12" y2="15"/>
-                        </svg>
-                    </div>
-                    <p class="drop-zone-text">拖拽视频文件到此处，或 <span class="drop-zone-browse">点击选择</span></p>
-                    <p class="drop-zone-hint">支持 MP4 / AVI / MKV / MOV / WebM 格式</p>
-                    <input type="file" id="file-input" accept=".mp4,.avi,.mkv,.mov,.wmv,.flv,.webm,.ts" hidden>
+                <div class="hero-grid">
+                    <section class="hero-panel">
+                        <div class="hero-copy">
+                            <span class="hero-kicker">本地处理</span>
+                            <h2>上传监控视频，得到活动时间段、行为标签与中文摘要</h2>
+                            <p>系统会先定位有人出现的时间段，再用本地多模态模型补强行为与场景理解，最后整理成结构化结果和调试信息。</p>
+                        </div>
+                        <div class="hero-stats">
+                            <div class="hero-stat"><span>检测链路</span><strong>YOLO / 多模态 / 文本总结</strong></div>
+                            <div class="hero-stat"><span>支持格式</span><strong>MP4 / MOV / AVI / MKV / WebM</strong></div>
+                            <div class="hero-stat"><span>默认模式</span><strong>本地并行分片分析</strong></div>
+                        </div>
+                        <div id="drop-zone" class="drop-zone">
+                            <div class="drop-zone-frame">
+                                <div class="drop-zone-icon">上传</div>
+                                <div class="drop-zone-kicker">上传监控视频</div>
+                                <p class="drop-zone-text">拖拽到这里，或点击选择文件</p>
+                                <p class="drop-zone-hint">上传后会自动创建任务，并按照右侧策略开始分析。</p>
+                            </div>
+                            <input type="file" id="file-input" accept=".mp4,.mov,.avi,.mkv,.webm" hidden>
+                        </div>
+                    </section>
+
+                    <aside class="strategy-panel">
+                        <div class="panel-heading">
+                            <span class="panel-kicker">增强策略</span>
+                            <h3>选择分析方式</h3>
+                            <p id="control-note" class="panel-note">系统会先用视频模型理解画面，再由文本模型整理摘要。</p>
+                        </div>
+                        <div class="strategy-stack">
+                            <label class="toggle-card">
+                                <input id="text-enhancement" type="checkbox" checked>
+                                <div class="toggle-copy">
+                                    <span>文本增强</span>
+                                    <small>把规则层和视频层结果整理成自然的中文摘要。</small>
+                                </div>
+                            </label>
+                            <label class="toggle-card">
+                                <input id="video-enhancement" type="checkbox" checked>
+                                <div class="toggle-copy">
+                                    <span>视频增强</span>
+                                    <small>用多模态模型补强动作、互动和场景变化的描述。</small>
+                                </div>
+                            </label>
+                            <label class="select-card"><span>文本模型</span><select id="text-model"></select></label>
+                            <label class="select-card"><span>视频模型</span><select id="video-model"></select></label>
+                        </div>
+                        <div class="strategy-foot">
+                            <div class="strategy-tip"><span>推荐</span><strong>默认保留 qwen2.5:7b + minicpm-v:8b</strong></div>
+                            <div class="strategy-tip muted"><span>提示</span><strong>如果只是测速，可先关闭视频增强。</strong></div>
+                        </div>
+                    </aside>
                 </div>
             </section>
 
-            <!-- 分析区（上传后显示） -->
             <section id="analysis-section" class="analysis-section hidden">
-                <!-- 视频播放器 -->
+                <section class="status-panel">
+                    <div class="status-panel-top">
+                        <div>
+                            <div class="status-kicker">任务状态</div>
+                            <h2 id="status-title">等待上传</h2>
+                            <p id="status-subtitle" class="status-subtitle">上传后会显示当前阶段、分片进度和模型增强状态。</p>
+                        </div>
+                        <div class="status-actions">
+                            <button id="cancel-btn" class="action-btn action-btn-danger hidden" type="button">停止分析</button>
+                            <button id="reset-btn" class="action-btn action-btn-secondary" type="button">重新上传</button>
+                        </div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-card metric-card-progress">
+                            <div class="metric-label">总进度</div>
+                            <div id="progress-value" class="metric-value">0%</div>
+                            <div class="metric-bar-shell"><div id="progress-bar" class="metric-bar"></div></div>
+                        </div>
+                        <div class="metric-card"><div class="metric-label">当前阶段</div><div id="phase-value" class="metric-value metric-value-small">等待中</div></div>
+                        <div class="metric-card"><div class="metric-label">分片完成</div><div id="chunk-value" class="metric-value metric-value-small">0 / 0</div></div>
+                        <div class="metric-card"><div class="metric-label">增强模型</div><div id="llm-value" class="metric-value metric-value-small">未启用</div></div>
+                    </div>
+                    <div class="task-note-row">
+                        <span id="task-state-badge" class="task-state-badge task-state-idle">idle</span>
+                        <span id="task-note" class="task-note">系统尚未开始分析。</span>
+                    </div>
+                </section>
+
                 <div class="player-container">
                     <video id="video-player" controls></video>
                     <div id="progress-overlay" class="progress-overlay">
                         <div class="progress-content">
                             <div class="progress-spinner"></div>
                             <p id="progress-message" class="progress-message">准备分析...</p>
-                            <div class="progress-bar-wrap">
-                                <div id="progress-bar" class="progress-bar"></div>
-                            </div>
-                            <p id="progress-pct" class="progress-pct">0%</p>
                         </div>
                     </div>
                 </div>
 
-                <!-- 时间轴 -->
                 <div class="timeline-container">
-                    <div class="timeline-header">
-                        <h2>活动时间轴</h2>
-                        <span id="segment-count" class="segment-badge">—</span>
-                    </div>
-                    <div id="timeline" class="timeline">
-                        <canvas id="timeline-canvas"></canvas>
-                    </div>
-                    <div class="timeline-labels">
-                        <span id="timeline-start">00:00</span>
-                        <span id="timeline-end">--:--</span>
-                    </div>
+                    <div class="timeline-header"><h2>活动时间轴</h2><span id="segment-count" class="segment-badge">--</span></div>
+                    <div id="timeline" class="timeline"><canvas id="timeline-canvas"></canvas></div>
+                    <div class="timeline-labels"><span id="timeline-start">00:00</span><span id="timeline-end">--:--</span></div>
                 </div>
 
-                <!-- 活动列表 -->
                 <div class="segments-container">
-                    <h2>活动详情</h2>
-                    <div id="segments-list" class="segments-list">
-                        <p class="segments-empty">分析完成后将在此显示活动详情</p>
-                    </div>
+                    <div class="timeline-header"><h2>活动详情</h2><span id="result-source" class="segment-badge">规则层</span></div>
+                    <div id="segments-list" class="segments-list"><p class="segments-empty">结果生成后会显示在这里。</p></div>
+                </div>
+
+                <div class="segments-container debug-container">
+                    <div class="timeline-header"><h2>模型调试</h2><span id="debug-badge" class="segment-badge">未加载</span></div>
+                    <div id="debug-summary" class="debug-summary"><p class="segments-empty">分析完成后，可在这里查看 prompt、原始输出、关键帧、短片段与回退原因。</p></div>
+                    <div id="debug-segment" class="debug-segment"><p class="segments-empty">点击任意片段的“查看调试”以展开底层信息。</p></div>
                 </div>
             </section>
         </main>
     </div>
-
     <script src="/static/index.js"></script>
 </body>
 </html>

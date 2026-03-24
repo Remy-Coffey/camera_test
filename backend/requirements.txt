@@ -4,3 +4,7 @@ python-multipart
 ultralytics
 opencv-python-headless
 numpy
+scipy
+pytest
+pytest-asyncio
+httpx

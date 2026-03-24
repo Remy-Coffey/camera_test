@@ -16,6 +16,9 @@ env/
 
 # Runtime data and large assets
 uploads/
+artifacts/
+*.sqlite3
+.pytest_cache/
 backend/*.pt
 
 # OS files
