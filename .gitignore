@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor settings
+.idea/
+.vscode/
+
+# Local agent state
+.agents/
+
+# Runtime data and large assets
+uploads/
+backend/*.pt
+
+# OS files
+Thumbs.db
+.DS_Store

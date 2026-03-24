@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>监控视频人物活动检测</title>
+    <meta name="description" content="智能分析监控视频，自动识别人物活动时段并生成描述">
+    <link rel="stylesheet" href="/static/index.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- 顶栏 -->
+        <header class="header">
+            <div class="header-logo">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                </svg>
+                <h1>视频活动检测</h1>
+            </div>
+            <span class="header-badge">AI Powered</span>
+        </header>
+
+        <main class="main">
+            <!-- 上传区 -->
+            <section id="upload-section" class="upload-section">
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-zone-icon">
+                        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <p class="drop-zone-text">拖拽视频文件到此处，或 <span class="drop-zone-browse">点击选择</span></p>
+                    <p class="drop-zone-hint">支持 MP4 / AVI / MKV / MOV / WebM 格式</p>
+                    <input type="file" id="file-input" accept=".mp4,.avi,.mkv,.mov,.wmv,.flv,.webm,.ts" hidden>
+                </div>
+            </section>
+
+            <!-- 分析区（上传后显示） -->
+            <section id="analysis-section" class="analysis-section hidden">
+                <!-- 视频播放器 -->
+                <div class="player-container">
+                    <video id="video-player" controls></video>
+                    <div id="progress-overlay" class="progress-overlay">
+                        <div class="progress-content">
+                            <div class="progress-spinner"></div>
+                            <p id="progress-message" class="progress-message">准备分析...</p>
+                            <div class="progress-bar-wrap">
+                                <div id="progress-bar" class="progress-bar"></div>
+                            </div>
+                            <p id="progress-pct" class="progress-pct">0%</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 时间轴 -->
+                <div class="timeline-container">
+                    <div class="timeline-header">
+                        <h2>活动时间轴</h2>
+                        <span id="segment-count" class="segment-badge">—</span>
+                    </div>
+                    <div id="timeline" class="timeline">
+                        <canvas id="timeline-canvas"></canvas>
+                    </div>
+                    <div class="timeline-labels">
+                        <span id="timeline-start">00:00</span>
+                        <span id="timeline-end">--:--</span>
+                    </div>
+                </div>
+
+                <!-- 活动列表 -->
+                <div class="segments-container">
+                    <h2>活动详情</h2>
+                    <div id="segments-list" class="segments-list">
+                        <p class="segments-empty">分析完成后将在此显示活动详情</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/index.js"></script>
+</body>
+</html>
